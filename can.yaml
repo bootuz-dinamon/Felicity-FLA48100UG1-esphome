@@ -1,0 +1,264 @@
+# --- CAN BUS: тільки прослуховування (батарея сама шле дані щосекунди) ---
+# GPIO27 = CTX (TX), GPIO26 = CRX (RX) — піни Weact CAN485
+canbus:
+  - platform: esp32_can
+    id: can_bus
+    tx_pin: GPIO27
+    rx_pin: GPIO26
+    can_id: 0
+    bit_rate: 500kbps
+    mode: LISTENONLY
+    on_frame:
+ 
+      # --- 0x351: Ліміти заряду/розряду ---
+      - can_id: 0x351
+        use_extended_id: false
+        then:
+          - lambda: |-
+              if (x.size() >= 8) {
+                float charge_v_limit    = ((x[1] << 8) | x[0]) * 0.1f;
+                float charge_a_limit    = ((x[3] << 8) | x[2]) * 0.1f;
+                float discharge_a_limit = ((x[5] << 8) | x[4]) * 0.1f;
+                float discharge_v_limit = ((x[7] << 8) | x[6]) * 0.1f;
+                id(charge_voltage_limit).publish_state(charge_v_limit);
+                id(charge_current_limit).publish_state(charge_a_limit);
+                id(discharge_current_limit).publish_state(discharge_a_limit);
+                id(discharge_voltage_limit).publish_state(discharge_v_limit);
+              }
+ 
+      # --- 0x355: SOC / SOH ---
+      - can_id: 0x355
+        use_extended_id: false
+        then:
+          - lambda: |-
+              if (x.size() >= 4) {
+                float soc = (x[1] << 8) | x[0];
+                float soh = (x[3] << 8) | x[2];
+                id(battery_soc).publish_state(soc);
+                id(battery_soh).publish_state(soh);
+              }
+ 
+      # --- 0x356: Напруга / Струм / Температура ---
+      - can_id: 0x356
+        use_extended_id: false
+        then:
+          - lambda: |-
+              if (x.size() >= 6) {
+                int16_t raw_v = (x[1] << 8) | x[0];
+                int16_t raw_a = (x[3] << 8) | x[2];
+                int16_t raw_t = (x[5] << 8) | x[4];
+                float voltage = raw_v * 0.01f;
+                float current = raw_a * 0.1f;
+                float temperature = raw_t * 0.1f;
+                id(battery_voltage).publish_state(voltage);
+                id(battery_current).publish_state(current);
+                id(battery_temperature).publish_state(temperature);
+              }
+ 
+      # --- 0x359: Прапори помилок/попереджень ---
+      - can_id: 0x359
+        use_extended_id: false
+        then:
+          - lambda: |-
+              if (x.size() >= 4) {
+                bool has_error   = (x[0] != 0x00) || (x[1] != 0x00);
+                bool has_warning = (x[2] != 0x00) || (x[3] != 0x00);
+                id(battery_error).publish_state(has_error);
+                id(battery_warning).publish_state(has_warning);
+              }
+ 
+      # --- 0x35C: Дозвіл заряду/розряду (0xC0 = обидва дозволені) ---
+      - can_id: 0x35c
+        use_extended_id: false
+        then:
+          - lambda: |-
+              if (x.size() >= 1) {
+                bool charge_enabled    = (x[0] & 0x80) != 0;
+                bool discharge_enabled = (x[0] & 0x40) != 0;
+                id(charge_enabled_sensor).publish_state(charge_enabled);
+                id(discharge_enabled_sensor).publish_state(discharge_enabled);
+              }
+ 
+      # --- 0x35E: Ім'я виробника (текстовий рядок) ---
+      - can_id: 0x35e
+        use_extended_id: false
+        then:
+          - lambda: |-
+              std::string name(x.begin(), x.end());
+              // прибираємо нульові байти в кінці рядка
+              size_t pos = name.find('\0');
+              if (pos != std::string::npos) name = name.substr(0, pos);
+              id(manufacturer_name).publish_state(name);
+ 
+      # --- 0x373: Min/Max напруга та температура комірок (BYD CellInfo) ---
+      # ПІДТВЕРДЖЕНО: формат температури — Кельвіни (K), не 0.1°C!
+      # Реальний приклад з BYD-документації: 1F 01 = 287K = 14°C.
+      # Для ваших даних (2C 01 = 300K = 27°C) це збіглося з показником
+      # загальної температури батареї з кадру 0x356 — гіпотеза підтверджена.
+      # УВАГА: для паралельного банку з 2+ батарей це min/max ПО ВСЬОМУ БАНКУ,
+      # а не для кожної батареї окремо — CAN-протокол не розрізняє окремі батареї.
+      - can_id: 0x373
+        use_extended_id: false
+        then:
+          - lambda: |-
+              if (x.size() >= 8) {
+                float cell_v_min = ((x[1] << 8) | x[0]) * 0.001f;
+                float cell_v_max = ((x[3] << 8) | x[2]) * 0.001f;
+                float cell_t_min = ((x[5] << 8) | x[4]) - 273.0f;
+                float cell_t_max = ((x[7] << 8) | x[6]) - 273.0f;
+                id(cell_voltage_min).publish_state(cell_v_min);
+                id(cell_voltage_max).publish_state(cell_v_max);
+                id(cell_temp_min).publish_state(cell_t_min);
+                id(cell_temp_max).publish_state(cell_t_max);
+              }
+ 
+sensor:
+  - platform: template
+    name: "Battery SOC"
+    id: battery_soc
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 0
+ 
+  - platform: template
+    name: "Battery SOH"
+    id: battery_soh
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 0
+ 
+  - platform: template
+    name: "Battery Voltage"
+    id: battery_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+ 
+  - platform: template
+    name: "Battery Current"
+    id: battery_current
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+ 
+  - platform: template
+    name: "Battery Temperature"
+    id: battery_temperature
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+ 
+  - platform: template
+    name: "Charge Voltage Limit"
+    id: charge_voltage_limit
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+ 
+  - platform: template
+    name: "Charge Current Limit"
+    id: charge_current_limit
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+ 
+  - platform: template
+    name: "Discharge Current Limit"
+    id: discharge_current_limit
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+ 
+  - platform: template
+    name: "Discharge Voltage Limit"
+    id: discharge_voltage_limit
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+ 
+  # Обчислювана потужність (Вт) = напруга * струм
+  - platform: template
+    name: "Battery Power"
+    id: battery_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    lambda: |-
+      return id(battery_voltage).state * id(battery_current).state;
+    update_interval: 5s
+ 
+  - platform: template
+    name: "Cell Voltage Min"
+    id: cell_voltage_min
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 3
+ 
+  - platform: template
+    name: "Cell Voltage Max"
+    id: cell_voltage_max
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 3
+ 
+  - platform: template
+    name: "Cell Voltage Delta"
+    id: cell_voltage_delta
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 3
+    lambda: |-
+      return id(cell_voltage_max).state - id(cell_voltage_min).state;
+    update_interval: 5s
+ 
+  - platform: template
+    name: "Cell Temperature Min"
+    id: cell_temp_min
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+ 
+  - platform: template
+    name: "Cell Temperature Max"
+    id: cell_temp_max
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+ 
+binary_sensor:
+  - platform: template
+    name: "Battery Error"
+    id: battery_error
+    device_class: problem
+ 
+  - platform: template
+    name: "Battery Warning"
+    id: battery_warning
+    device_class: problem
+ 
+  - platform: template
+    name: "Charge Enabled"
+    id: charge_enabled_sensor
+ 
+  - platform: template
+    name: "Discharge Enabled"
+    id: discharge_enabled_sensor
+ 
+text_sensor:
+  - platform: template
+    name: "Manufacturer"
+    id: manufacturer_name
