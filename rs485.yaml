@@ -1,0 +1,117 @@
+uart:
+  id: uart_bus
+  rx_pin: ${rx_pin}
+  tx_pin: ${tx_pin}
+  baud_rate: 9600
+  rx_buffer_size: 256
+  debug:
+      direction: both
+      
+modbus:
+  id: modbus1
+  uart_id: uart_bus
+
+modbus_controller:
+  - id: felicity_bms
+    address: 1
+    modbus_id: modbus1
+    setup_priority: -10
+    update_interval: 10s
+
+sensor:
+  # Напруга (Працює!)
+  - platform: modbus_controller
+    modbus_controller_id: felicity_bms
+    name: "Battery Voltage"
+    address: 4870
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  # SOC (Працює!)
+  - platform: modbus_controller
+    modbus_controller_id: felicity_bms
+    name: "Battery SOC"
+    address: 4875
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "%"
+
+  # 4. Температура MOSFET (Працює!)
+  - platform: modbus_controller
+    modbus_controller_id: felicity_bms
+    name: "MOSFET Temperature"
+    address: 4874
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: "°C"
+
+  # 5. Цикли (Працює!)
+  - platform: modbus_controller
+    modbus_controller_id: felicity_bms
+    name: "Battery Cycles"
+    address: 4865
+    register_type: holding
+    value_type: U_WORD
+    accuracy_decimals: 0
+    state_class: total_increasing 
+    filters:
+      - round: 0
+
+  # Max Cell Voltage (Тепер точно на 4896)
+  - platform: modbus_controller
+    modbus_controller_id: felicity_bms
+    name: "Max Cell Voltage"
+    address: 4896
+    id: cell_max
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  # Min Cell Voltage (Він іде наступним після номера макс. комірки)
+  - platform: modbus_controller
+    modbus_controller_id: felicity_bms
+    name: "Min Cell Voltage"
+    address: 4898
+    id: cell_min
+    register_type: holding
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  # Дельта (Різниця)
+  - platform: template
+    name: "Cell Delta"
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    lambda: |-
+      return id(cell_max).state - id(cell_min).state;
+    update_interval: 10s
+
+  - platform: modbus_controller
+    modbus_controller_id: felicity_bms
+    name: "Battery Temp Sensor"
+    address: 4902 # Це адреса відразу після Min Cell Number
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: "°C"
+
+  - platform: modbus_controller
+    modbus_controller_id: felicity_bms
+    name: "Battery Current"
+    address: 4871
+    register_type: holding
+    value_type: S_WORD
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+      - multiply: -1.0  # Оцей рядок змінить + на -
