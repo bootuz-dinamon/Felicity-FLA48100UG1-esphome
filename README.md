@@ -12,4 +12,8 @@ The board can be powered from the battery connector itself - there is 5V and GND
 ![Pinout Felicity FLA48100UG1](https://github.com/bootuz-dinamon/Felicity-FLA48100UG1-esphome/blob/main/com.jpg)
 
 
+![Sensors CAN Felicity FLA48100UG1](https://github.com/bootuz-dinamon/Felicity-FLA48100UG1-esphome/blob/main/Sensors.jpg)
+
+
+
 [![Felicity FLA48100UG1](https://i.ytimg.com/vi/bG3cBQ1ints/sddefault.jpg)](https://youtu.be/bG3cBQ1ints)
